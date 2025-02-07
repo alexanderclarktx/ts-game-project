@@ -2,8 +2,8 @@
   "name": "@piggo-gg/server",
   "main": "./main.ts",
   "scripts": {
-    "start": "bun prisma:deploy && bun src/PiggoApi.ts",
-    "dev": "DATABASE_URL='postgresql://postgres@localhost:5432/piggo' bun --watch src/PiggoApi.ts",
+    "start": "bun prisma:deploy && bun src/Api.ts",
+    "dev": "DATABASE_URL='postgresql://postgres@localhost:5432/piggo' bun --watch src/Api.ts",
     "prisma:generate": "bun x prisma generate --schema=src/db/schema.prisma",
     "prisma:local": "DATABASE_URL='postgresql://postgres@localhost:5432/piggo' bun x prisma migrate dev --schema=src/db/schema.prisma",
     "prisma:deploy": "bun x prisma migrate deploy --schema=src/db/schema.prisma"

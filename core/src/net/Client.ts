@@ -1,7 +1,10 @@
 import {
   Character, DelaySyncer, LobbyCreate, LobbyJoin, NetClientSystem,
   NetMessageTypes, Player, stringify, RequestData, RequestTypes,
-  Syncer, World, genPlayerId, SoundManager, genHash, AuthLogin
+  Syncer, World, genPlayerId, SoundManager, genHash, AuthLogin,
+  FriendsList,
+  Friend,
+  Safe
 } from "@piggo-gg/core"
 
 const servers = {
@@ -29,6 +32,7 @@ export type Client = {
   lobbyCreate: (callback: Callback<LobbyCreate>) => void
   lobbyJoin: (lobbyId: string, callback: Callback<LobbyJoin>) => void
   authLogin: (address: string, message: string, signature: string) => void
+  friendsList: (callback: Callback<FriendsList>) => void
 }
 
 export type ClientProps = {
@@ -91,7 +95,7 @@ export const Client = ({ world }: ClientProps): Client => {
         }
       })
     },
-    authLogin: (address: string, message: string, signature: string) => {
+    authLogin: (address, message, signature) => {
       request<AuthLogin>({ route: "auth/login", type: "request", id: genHash(), message, signature, address }, (response) => {
         console.log("authLogin response", response)
         if ("error" in response) {
@@ -100,6 +104,13 @@ export const Client = ({ world }: ClientProps): Client => {
           client.player.components.pc.data.name = response.name
           client.token = response.token
         }
+      })
+    },
+    friendsList: (callback) => {
+      if (!client.token) return
+      request<FriendsList>({ route: "friends/list", type: "request", id: genHash(), token: client.token }, (response) => {
+        console.log("friendsList response", response)
+        callback(response)
       })
     }
   }

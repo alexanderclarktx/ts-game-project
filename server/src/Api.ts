@@ -1,4 +1,4 @@
-import { ExtractedRequestTypes, NetMessageTypes, RequestTypes, ResponseData, entries, genHash, keys, stringify } from "@piggo-gg/core"
+import { ExtractedRequestTypes, Friend, NetMessageTypes, RequestTypes, ResponseData, entries, genHash, keys, stringify } from "@piggo-gg/core"
 import { ServerWorld, PrismaClient } from "@piggo-gg/server"
 import { Server, ServerWebSocket, env } from "bun"
 import { ethers } from "ethers"
@@ -10,7 +10,9 @@ export type PerClientData = {
   worldId: string
 }
 
-export type PiggoApi = {
+type SessionToken = { address: string, name: string }
+
+export type Api = {
   bun: Server | undefined
   clientIncr: number
   clients: Record<string, ServerWebSocket<PerClientData>>
@@ -19,19 +21,19 @@ export type PiggoApi = {
     [R in RequestTypes["route"]]: (_: { ws: ServerWebSocket<PerClientData>, data: ExtractedRequestTypes<R> }) =>
       Promise<ExtractedRequestTypes<R>['response']>
   }
-  init: () => PiggoApi
+  init: () => Api
   handleClose: (ws: ServerWebSocket<PerClientData>) => void
   handleOpen: (ws: ServerWebSocket<PerClientData>) => void
   handleMessage: (ws: ServerWebSocket<PerClientData>, data: string) => void
 }
 
-export const PiggoApi = (): PiggoApi => {
+export const Api = (): Api => {
 
   const prisma = new PrismaClient()
 
   const JWT_SECRET = process.env["JWT_SECRET"] ?? "piggo"
 
-  const piggoApi: PiggoApi = {
+  const api: Api = {
     bun: undefined,
     clientIncr: 1,
     clients: {},
@@ -46,7 +48,7 @@ export const PiggoApi = (): PiggoApi => {
         const lobbyId = genHash()
 
         // create world
-        piggoApi.worlds[lobbyId] = ServerWorld()
+        api.worlds[lobbyId] = ServerWorld()
 
         // set world id for this client
         ws.data.worldId = lobbyId
@@ -56,8 +58,8 @@ export const PiggoApi = (): PiggoApi => {
         return { id: data.id, lobbyId }
       },
       "lobby/join": async ({ ws, data }) => {
-        if (!piggoApi.worlds[data.join]) {
-          piggoApi.worlds[data.join] = ServerWorld()
+        if (!api.worlds[data.join]) {
+          api.worlds[data.join] = ServerWorld()
         }
 
         ws.data.worldId = data.join
@@ -67,7 +69,29 @@ export const PiggoApi = (): PiggoApi => {
         return { id: data.id }
       },
       "friends/list": async ({ data }) => {
-        return { id: data.id }
+        let result: { id: string, friends: Friend[] } = { friends: [], id: data.id }
+
+        let token: SessionToken | undefined = undefined
+
+        try {
+          token = jwt.verify(data.token, JWT_SECRET) as SessionToken
+        } catch (e) {
+          return { id: data.id, error: "JWT verification failed" }
+        }
+
+        const user = await prisma.users.findUnique({ where: { name: token.name } })
+        if (!user) return { id: data.id, error: "User not found" }
+
+        const friends = await prisma.friends.findMany({
+          where: { user1: user, status: "ACCEPTED" },
+          include: { user2: true }
+        })
+
+        result.friends = friends.map(({ user2 }) => {
+          return { address: user2.walletAddress, name: user2.name, online: false }
+        })
+
+        return result
       },
       "friends/add": async ({ data }) => {
         return { id: data.id }
@@ -82,7 +106,6 @@ export const PiggoApi = (): PiggoApi => {
         const verified = recoveredAddress.toLowerCase() === data.address.toLowerCase()
 
         if (!verified) {
-          console.error("Signature verification failed")
           return { id: data.id, error: "Signature verification failed" }
         }
 
@@ -110,32 +133,32 @@ export const PiggoApi = (): PiggoApi => {
       }
     },
     init: () => {
-      piggoApi.bun = Bun.serve({
+      api.bun = Bun.serve({
         hostname: "0.0.0.0",
         port: env.PORT ?? 3000,
         fetch: (r: Request, server: Server) => server.upgrade(r) ? new Response() : new Response("upgrade failed", { status: 500 }),
         websocket: {
           perMessageDeflate: true,
-          close: piggoApi.handleClose,
-          open: piggoApi.handleOpen,
-          message: piggoApi.handleMessage,
+          close: api.handleClose,
+          open: api.handleOpen,
+          message: api.handleMessage,
         },
       })
 
-      return piggoApi
+      return api
     },
     handleClose: (ws: ServerWebSocket<PerClientData>) => {
-      const world = piggoApi.worlds[ws.data.worldId]
+      const world = api.worlds[ws.data.worldId]
       if (world) world.handleClose(ws)
 
-      delete piggoApi.clients[ws.data.id]
+      delete api.clients[ws.data.id]
     },
     handleOpen: (ws: ServerWebSocket<PerClientData>) => {
       // set data for this client
-      ws.data = { id: piggoApi.clientIncr, worldId: "", playerName: "UNKNOWN" }
+      ws.data = { id: api.clientIncr, worldId: "", playerName: "UNKNOWN" }
 
       // increment id
-      piggoApi.clientIncr += 1
+      api.clientIncr += 1
     },
     handleMessage: (ws: ServerWebSocket<PerClientData>, data: string) => {
       if (typeof data != "string") return
@@ -144,15 +167,15 @@ export const PiggoApi = (): PiggoApi => {
       if (!wsData.type) return
 
       if (wsData.type === "request") {
-        const handler = piggoApi.handlers[wsData.data.route]
+        const handler = api.handlers[wsData.data.route]
 
         if (handler) {
-          console.log("request", wsData.data)
+          console.log("request", stringify(wsData.data))
 
           // @ts-expect-error
           const result = handler({ ws, data: wsData.data }) // TODO fix type casting
           result.then((data) => {
-            console.log("response", data)
+            console.log("response", stringify(data))
             const responseData: ResponseData = { type: "response", data }
             ws.send(stringify(responseData))
           })
@@ -160,20 +183,20 @@ export const PiggoApi = (): PiggoApi => {
         return
       }
 
-      const world = piggoApi.worlds[ws.data.worldId] ?? piggoApi.worlds["hub"]
+      const world = api.worlds[ws.data.worldId] ?? api.worlds["hub"]
       if (world) world.handleMessage(ws, wsData)
     }
   }
 
   setInterval(() => {
     // cleanup empty worlds
-    entries(piggoApi.worlds).forEach(([id, world]) => {
-      if (keys(world.clients).length === 0) delete piggoApi.worlds[id]
+    entries(api.worlds).forEach(([id, world]) => {
+      if (keys(world.clients).length === 0) delete api.worlds[id]
     })
   }, 10000)
 
-  return piggoApi
+  return api
 }
 
-const server = PiggoApi().init()
+const server = Api().init()
 console.log(`包 ${server.bun?.url}`)

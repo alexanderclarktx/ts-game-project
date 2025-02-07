@@ -34,6 +34,8 @@ export type RollbackTickData = {
 
 // API
 
+export type Safe<T extends Request<string>> = Omit<T, "response"> & { response: Exclude<T["response"], { error: string, id: string }> }
+
 export type Request<Route extends string, Response extends {} = {}> = {
   type: "request"
   id: string
@@ -70,7 +72,8 @@ export type LobbyJoinRequest = Omit<LobbyJoin, "response">
 export type LobbyExitRequest = Omit<LobbyExit, "response">
 
 // friends endpoints
-export type FriendsList = Request<"friends/list">
+export type Friend = { address: string, name: string, online: boolean }
+export type FriendsList = Request<"friends/list", { friends: Friend[] }> & { token: string }
 export type FriendsAdd = Request<"friends/add"> & { addUserId: string }
 export type FriendsRemove = Request<"friends/remove"> & { removeUserId: string }
 
